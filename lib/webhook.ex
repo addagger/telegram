@@ -69,30 +69,30 @@ defmodule Telegram.Webhook do
 
   use Supervisor
 
+  @telegram_webhook_params [:certificate, :ip_address, :max_connections, :allowed_updates, :drop_pending_updates, :secret_token]
+
   @default_port 443
   @default_local_port 4000
-  @default_max_connections 40
 
   @default_config [
     port: @default_port,
     local_port: @default_local_port,
-    max_connections: @default_max_connections,
     set_webhook: true
   ]
 
   @typedoc """
   Webhook configuration.
-
-  - `host`: (reverse proxy) hostname of the HTTPS webhook url (required)
+  
+  - all telegram setWebhook parameters: https://core.telegram.org/bots/api#setwebhook (except url)
+  - `hostname`: hostname for webhook url
   - `port`: (reverse proxy) port of the HTTPS webhook url (optional, default: #{@default_port})
   - `local_port`: (backend) port of the application HTTP web server (optional, default: #{@default_local_port})
-  - `max_connections`: maximum allowed number of simultaneous connections to the webhook for update delivery (optional, defaults #{@default_max_connections})
   """
+
   @type config :: [
           host: String.t(),
           port: :inet.port_number(),
           local_port: :inet.port_number(),
-          max_connections: 1..100,
           set_webhook: boolean()
         ]
 
@@ -107,26 +107,28 @@ defmodule Telegram.Webhook do
     host = Keyword.fetch!(config, :host)
     port = Keyword.fetch!(config, :port)
     local_port = Keyword.fetch!(config, :local_port)
-    max_connections = Keyword.fetch!(config, :max_connections)
+
+    telegram_webhook_params = Enum.filter(config, fn {param, _} -> param in @telegram_webhook_params end)
+
     set_webhook? = Keyword.fetch!(config, :set_webhook)
 
     bot_routing_map =
       bot_specs
       |> Map.new(fn {bot_behaviour_mod, opts} ->
         token = Keyword.fetch!(opts, :token)
-        {token, bot_behaviour_mod}
+        url_token = Keyword.get(opts, :url_token, :crypto.hash(:sha, :erlang.term_to_binary(token)) |> Base.url_encode64(padding: false))
+        {url_token, {token, bot_behaviour_mod}}
       end)
 
-    bot_specs
-    |> Enum.each(fn {bot_behaviour_mod, opts} ->
-      token = Keyword.fetch!(opts, :token)
-      url = %URI{scheme: "https", host: host, path: "/#{token}", port: port} |> to_string()
-
-      Logger.info("Running in webhook mode #{url}", bot: bot_behaviour_mod, token: token)
+    bot_routing_map
+    |> Enum.each(fn {url_token, {token, bot_behaviour_mod}} ->
+      url = %URI{scheme: "https", host: host, path: "/telegram/#{url_token}", port: port} |> to_string()
+      webhook_params = Keyword.put(telegram_webhook_params, :url, url)
+      Logger.info("Running in webhook mode: #{inspect(webhook_params)}", bot: bot_behaviour_mod, token: token)
 
       if set_webhook? do
         # coveralls-ignore-start
-        set_webhook(token, url, max_connections)
+        set_webhook(token, webhook_params)
         # coveralls-ignore-stop
       else
         Logger.info("Skipped setWebhook as requested via config.set_webhook", bot: bot_behaviour_mod, token: token)
@@ -143,9 +145,8 @@ defmodule Telegram.Webhook do
 
   # coveralls-ignore-start
 
-  defp set_webhook(token, url, max_connections) do
-    opts = [url: url, max_connections: max_connections]
-    {:ok, _} = retry(fn -> Telegram.Api.request(token, "setWebhook", opts) end)
+  defp set_webhook(token, webhook_params) do
+    {:ok, _} = retry(fn -> Telegram.Api.request(token, "setWebhook", webhook_params) end)
   end
 
   # coveralls-ignore-stop
@@ -162,10 +163,10 @@ defmodule Telegram.Webhook.Router do
   plug Plug.Parsers, parsers: [:json], pass: ["*/*"], json_decoder: Jason
   plug :dispatch
 
-  post "/:token" do
+  post "/telegram/:url_token" do
     update = conn.body_params
     bot_routing_map = conn.assigns.bot_routing_map
-    bot_dispatch_behaviour = bot_routing_map[token]
+    {token, bot_dispatch_behaviour} = bot_routing_map[url_token]
 
     Logger.debug("received update: #{inspect(update)}", bot: inspect(bot_dispatch_behaviour))
 

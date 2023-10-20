@@ -64,9 +64,19 @@ defmodule Telegram.Bot.Utils do
 
       {_update_type, %{"message" => %{"chat" => %{"id" => _} = chat}} = _chat} ->
         {:ok, chat}
-
       _ ->
         nil
     end)
   end
+	
+  @spec get_user(Types.update()) :: {:ok, map()} | nil
+  def get_user(update) do
+    Enum.find_value(update, fn
+		  {_update_type, %{"from" => %{"id" => _} = from}} ->
+		    {:ok, from} # added for inline messaging
+      _ ->
+        nil
+    end)
+  end
+	
 end

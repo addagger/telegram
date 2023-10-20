@@ -70,14 +70,16 @@ defmodule Telegram.ChatBot do
 
   @type t :: module()
 
-  @type chat :: map()
+  # @type chat :: map()
+  # @type user :: map()
+	@type chat_process_id :: String.t()
   @type chat_state :: any()
 
   @doc """
   Invoked once when the chat starts.
   Return the initial chat_state.
   """
-  @callback init(chat :: chat()) ::
+  @callback init(update :: Types.update()) ::
               {:ok, initial_state :: chat_state()}
               | {:ok, initial_state :: chat_state(), timeout :: timeout()}
 
@@ -124,14 +126,14 @@ defmodule Telegram.ChatBot do
       require Logger
 
       @impl Telegram.ChatBot
-      def handle_info(msg, _token, _chat_id, chat_state) do
+      def handle_info(msg, _token, _chat_process_id, chat_state) do
         Logger.error("#{inspect(__MODULE__)} received unexpected message in handle_info/4: #{inspect(msg)}~n")
 
         {:ok, chat_state}
       end
 
       @impl Telegram.ChatBot
-      def handle_timeout(token, chat_id, chat_state) do
+      def handle_timeout(token, chat_process_id, chat_state) do
         {:stop, chat_state}
       end
 
@@ -144,7 +146,7 @@ defmodule Telegram.ChatBot do
 
       @impl Telegram.Bot.Dispatch
       def dispatch_update(update, token) do
-        Session.Server.handle_update(__MODULE__, token, update)
+        Session.Server.handle_update(__MODULE__, token, update) # server.ex 26 line
 
         :ok
       end
@@ -158,7 +160,7 @@ defmodule Telegram.ChatBot do
   the business logic specific session identifier and the telegram chat_id.
   """
   @spec lookup(Types.token(), String.t()) :: {:error, :not_found} | {:ok, pid}
-  def lookup(token, chat_id) do
-    Chat.Registry.lookup(token, chat_id)
+  def lookup(token, chat_process_id) do
+    Chat.Registry.lookup(token, chat_process_id)
   end
 end
